@@ -6,7 +6,7 @@ written by Adafruit Industries
 
 #include "DHT.h"
 
-DHT::DHT(uint8_t pin, uint8_t type) {
+DHT::DHT(uint8 pin, uint8 type) {
   _pin = pin;
   _type = type;
   firstreading = true;
@@ -17,6 +17,8 @@ void DHT::begin(void) {
   pinMode(_pin, INPUT);
   digitalWrite(_pin, HIGH);
   _lastreadtime = 0;
+  lastTemperature = NAN;
+  lastHumidity = NAN;
 }
 
 //boolean S == Scale.  True == Farenheit; False == Celcius
@@ -26,7 +28,7 @@ float DHT::readTemperature(bool S) {
   if (read()) {
     switch (_type) {
     case DHT11:
-      f = data[2];
+      f = lastTemperature = data[2];
       if(S)
       	f = convertCtoF(f);
       	
@@ -38,15 +40,17 @@ float DHT::readTemperature(bool S) {
       f += data[3];
       f /= 10;
       if (data[2] & 0x80)
-	f *= -1;
+		f *= -1;
+      lastTemperature = f;
       if(S)
-	f = convertCtoF(f);
+		f = convertCtoF(f);
 
       return f;
     }
   }
-  Serial.print("Read fail");
-  return NAN;
+  if (S)
+    return convertCtoF(lastTemperature);
+  return lastTemperature;
 }
 
 float DHT::convertCtoF(float c) {
@@ -58,7 +62,7 @@ float DHT::readHumidity(void) {
   if (read()) {
     switch (_type) {
     case DHT11:
-      f = data[0];
+      f = lastHumidity = data[0];
       return f;
     case DHT22:
     case DHT21:
@@ -66,23 +70,32 @@ float DHT::readHumidity(void) {
       f *= 256;
       f += data[1];
       f /= 10;
+      lastHumidity = f;
       return f;
     }
   }
-  Serial.print("Read fail");
-  return NAN;
+  return lastHumidity;
 }
 
+uint8 DHT::waitFor(uint8 val, uint8 pin, uint8 timeout_us){
+	uint32 start = micros();
+	uint32 timeout_t = start + timeout_us;
+	while(digitalRead(pin) != val){
+		if(micros() > timeout_t) return 0xff;
+	}
+	return micros() - start;
+}
 
+uint8 DHT::WAIT_FOR(uint8 val, uint8 timeout_us, uint8 error)
+{
+  			uint8 __r = waitFor(val, _pin, timeout_us);
+			if(__r == 0xff) return error;
+			__r;
+}
+  
 boolean DHT::read(void) {
-  uint8_t laststate = HIGH;
-  uint8_t counter = 0;
-  uint8_t j = 0, i;
+  uint8 j = 0;
   unsigned long currenttime;
-
-  // pull the pin high and wait 250 milliseconds
-  digitalWrite(_pin, HIGH);
-  delay(250);
 
   currenttime = millis();
   if (currenttime < _lastreadtime) {
@@ -94,67 +107,41 @@ boolean DHT::read(void) {
     //delay(2000 - (currenttime - _lastreadtime));
   }
   firstreading = false;
-  /*
-    Serial.print("Currtime: "); Serial.print(currenttime);
-    Serial.print(" Lasttime: "); Serial.print(_lastreadtime);
-  */
+  
   _lastreadtime = millis();
 
   data[0] = data[1] = data[2] = data[3] = data[4] = 0;
   
+  digitalWrite(_pin, LOW); // externally pulled up: don't use internal pullup
+
   // now pull it low for ~20 milliseconds
   pinMode(_pin, OUTPUT);
-  digitalWrite(_pin, LOW);
   delay(20);
-  cli();
-  digitalWrite(_pin, HIGH);
-  delayMicroseconds(40);
   pinMode(_pin, INPUT);
+  delayMicroseconds(40);
 
-  // read in timings
-  for ( i=0; i< MAXTIMINGS; i++) {
-    counter = 0;
-    while (digitalRead(_pin) == laststate) {
-      counter++;
-      delayMicroseconds(1);
-      if (counter == 255) {
-        break;
-      }
-    }
-    laststate = digitalRead(_pin);
+  // sensor will respond by pulling low for 80us and high for 80us
+  WAIT_FOR(HIGH, 90, 1);
+  WAIT_FOR(LOW,  90, 2);
 
-    if (counter == 255) break;
+  for(int i = 0; i < 40; ++i){
+	  uint8* byte = &data[i/8];
+	  *byte <<= 1;
 
-    // ignore first 3 transitions
-    if ((i >= 4) && (i%2 == 0)) {
-      // shove each bit into the storage bytes
-      data[j/8] <<= 1;
-      if (counter > 6)
-        data[j/8] |= 1;
-      j++;
-    }
-
+	  // then each bit is 50us of low, and then either 25 or 70 us of high (0/1)
+	  WAIT_FOR(HIGH, 60, 3);
+	  uint8 elapsed = WAIT_FOR(LOW, 90, 4);
+	  if(elapsed > 40){
+		  *byte |= 0x1;
+	  }
   }
-
-  sei();
   
-  /*
-  Serial.println(j, DEC);
-  Serial.print(data[0], HEX); Serial.print(", ");
-  Serial.print(data[1], HEX); Serial.print(", ");
-  Serial.print(data[2], HEX); Serial.print(", ");
-  Serial.print(data[3], HEX); Serial.print(", ");
-  Serial.print(data[4], HEX); Serial.print(" =? ");
-  Serial.println(data[0] + data[1] + data[2] + data[3], HEX);
-  */
-
   // check we read 40 bits and that the checksum matches
   if ((j >= 40) && 
       (data[4] == ((data[0] + data[1] + data[2] + data[3]) & 0xFF)) ) {
     return true;
   }
   
-
   return false;
 
 }
