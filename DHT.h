@@ -9,7 +9,7 @@
  #include "WProgram.h"
 #endif
 
-/* DHT library 
+/* DHT library (maple port)
 
 MIT license
 written by Adafruit Industries
@@ -41,3 +41,5 @@ class DHT {
 
 };
 #endif
+
+        
